@@ -16,6 +16,7 @@
 from unittest.mock import Mock, patch
 
 from http_server_mock import HttpServerMock
+from tornado.httpclient import HTTPClientError
 from tornado.testing import AsyncHTTPTestCase
 
 from opentelemetry import trace
@@ -599,6 +600,46 @@ class TornadoHookTest(TornadoTest):
         self.assertEqual(client_span.name, "name from client hook")
         self.assertSpanHasAttributes(client_span, {"attr-from-hook": "value"})
 
+        self.memory_exporter.clear()
+
+
+class TestTornadoHTTPClientInstrumentation(TornadoTest, WsgiTestBase):
+    def test_http_client_success_response(self):
+        response = self.fetch("/")
+        self.assertEqual(response.code, 201)
+
+        spans = self.memory_exporter.get_finished_spans()
+        self.assertEqual(len(spans), 3)
+        manual, server, client = self.sorted_spans(spans)
+        self.assertEqual(manual.name, "manual")
+        self.assertEqual(server.name, "GET /")
+        self.assertEqual(client.name, "GET")
+        self.memory_exporter.clear()
+
+    def test_http_client_failed_response(self):
+        # when an exception isn't thrown
+        response = self.fetch("/some-404")
+        self.assertEqual(response.code, 404)
+
+        spans = self.memory_exporter.get_finished_spans()
+        self.assertEqual(len(spans), 2)
+        server, client = self.sorted_spans(spans)
+        self.assertEqual(server.name, "GET /some-404")
+        self.assertEqual(client.name, "GET")
+        self.memory_exporter.clear()
+
+        # when an exception is thrown
+        try:
+            response = self.fetch("/some-404", raise_error=True)
+            self.assertEqual(response.code, 404)
+        except HTTPClientError:
+            pass
+
+        spans = self.memory_exporter.get_finished_spans()
+        self.assertEqual(len(spans), 2)
+        server, client = self.sorted_spans(spans)
+        self.assertEqual(server.name, "GET /some-404")
+        self.assertEqual(client.name, "GET")
         self.memory_exporter.clear()
 
 
